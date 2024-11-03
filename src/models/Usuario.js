@@ -18,9 +18,14 @@ class Usuario {
       .first();
   }
 
-  static async listar() {
-    return await connection('usuarios')
-      .select('*');
+  static async listar(tipo = null) {
+    let query = connection('usuarios').select('*');
+    
+    if (tipo) {
+      query = query.where({ tipo });
+    }
+    
+    return query;
   }
 
   static async atualizar(id, dados) {
@@ -34,6 +39,11 @@ class Usuario {
     return await connection('usuarios')
       .where({ id })
       .del();
+  }
+
+  static async contar() {
+    const [result] = await connection('usuarios').count('* as total');
+    return result.total;
   }
 }
 

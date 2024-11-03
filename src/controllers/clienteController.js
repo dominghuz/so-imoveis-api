@@ -1,123 +1,130 @@
-import supabase from '../config/supabase.js';
-import { ClienteSchema } from '../models/Cliente.js';
+import Cliente from '../models/Cliente.js';
 
-export const getClientes = async (req, res, next) => {
+export const listarClientes = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, tipo, search } = req.query;
+    const { 
+      interesse,
+      cidade,
+      renda_min,
+      renda_max,
+      page = 1,
+      limit = 10
+    } = req.query;
+
     const offset = (page - 1) * limit;
 
-    let query = supabase
-      .from('clientes')
-      .select('*', { count: 'exact' })
-      .range(offset, offset + limit - 1)
-      .order('nome');
+    const clientes = await Cliente.listar({
+      interesse,
+      cidade,
+      renda_min,
+      renda_max,
+      limit: parseInt(limit),
+      offset
+    });
 
-    if (tipo) {
-      query = query.eq('tipo', tipo);
+    res.json(clientes);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const buscarCliente = async (req, res, next) => {
+  try {
+    const cliente = await Cliente.buscarPorId(req.params.id);
+    
+    if (!cliente) {
+      return res.status(404).json({ erro: 'Cliente não encontrado' });
+    }
+    
+    res.json(cliente);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const criarCliente = async (req, res, next) => {
+  try {
+    // Verificar se já existe cliente com mesmo BI ou email
+    const clienteExistente = await Cliente.buscarPorBi(req.body.bi);
+    if (clienteExistente) {
+      return res.status(400).json({ erro: 'BI já cadastrado' });
     }
 
-    if (search) {
-      query = query.or(`nome.ilike.%${search}%,email.ilike.%${search}%,telefone.ilike.%${search}%`);
+    const emailExistente = await Cliente.buscarPorEmail(req.body.email);
+    if (emailExistente) {
+      return res.status(400).json({ erro: 'Email já cadastrado' });
     }
 
-    const { data, error, count } = await query;
+    const cliente = await Cliente.criar(req.body);
+    res.status(201).json(cliente);
+  } catch (error) {
+    next(error);
+  }
+};
 
-    if (error) throw error;
+export const atualizarCliente = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    
+    // Verificar se o cliente existe
+    const clienteExistente = await Cliente.buscarPorId(id);
+    if (!clienteExistente) {
+      return res.status(404).json({ erro: 'Cliente não encontrado' });
+    }
+
+    // Se estiver atualizando BI ou email, verificar se já existem
+    if (req.body.bi && req.body.bi !== clienteExistente.bi) {
+      const biExistente = await Cliente.buscarPorBi(req.body.bi);
+      if (biExistente) {
+        return res.status(400).json({ erro: 'BI já cadastrado' });
+      }
+    }
+
+    if (req.body.email && req.body.email !== clienteExistente.email) {
+      const emailExistente = await Cliente.buscarPorEmail(req.body.email);
+      if (emailExistente) {
+        return res.status(400).json({ erro: 'Email já cadastrado' });
+      }
+    }
+
+    const clienteAtualizado = await Cliente.atualizar(id, req.body);
+    res.json(clienteAtualizado);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deletarCliente = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    
+    const cliente = await Cliente.buscarPorId(id);
+    if (!cliente) {
+      return res.status(404).json({ erro: 'Cliente não encontrado' });
+    }
+
+    await Cliente.deletar(id);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Endpoints para estatísticas
+export const estatisticasClientes = async (req, res, next) => {
+  try {
+    const [
+      porInteresse,
+      porCidade
+    ] = await Promise.all([
+      Cliente.contarPorInteresse(),
+      Cliente.contarPorCidade()
+    ]);
 
     res.json({
-      clientes: data,
-      pagination: {
-        total: count,
-        page: parseInt(page),
-        totalPages: Math.ceil(count / limit)
-      }
+      porInteresse,
+      porCidade
     });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getCliente = async (req, res, next) => {
-  try {
-    const { data, error } = await supabase
-      .from('clientes')
-      .select(`
-        *,
-        agendamentos:agendamentos(*)
-      `)
-      .eq('id', req.params.id)
-      .single();
-
-    if (error) throw error;
-    if (!data) {
-      const error = new Error('Cliente não encontrado');
-      error.status = 404;
-      throw error;
-    }
-    
-    res.json(data);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const createCliente = async (req, res, next) => {
-  try {
-    const validatedData = await ClienteSchema.parseAsync(req.body);
-
-    const { data, error } = await supabase
-      .from('clientes')
-      .insert([{
-        ...validatedData,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }])
-      .select()
-      .single();
-
-    if (error) throw error;
-    res.status(201).json(data);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateCliente = async (req, res, next) => {
-  try {
-    const validatedData = await ClienteSchema.partial().parseAsync(req.body);
-
-    const { data, error } = await supabase
-      .from('clientes')
-      .update({
-        ...validatedData,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', req.params.id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    if (!data) {
-      const error = new Error('Cliente não encontrado');
-      error.status = 404;
-      throw error;
-    }
-    
-    res.json(data);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const deleteCliente = async (req, res, next) => {
-  try {
-    const { error } = await supabase
-      .from('clientes')
-      .delete()
-      .eq('id', req.params.id);
-
-    if (error) throw error;
-    res.json({ message: 'Cliente removido com sucesso' });
   } catch (error) {
     next(error);
   }

@@ -1,178 +1,133 @@
-import supabase from '../config/supabase.js';
-import { UsuarioSchema, UsuarioUpdateSchema } from '../models/Usuario.js';
+import bcrypt from 'bcrypt';
+import Usuario from '../models/Usuario.js';
 
-export const getUsuarios = async (req, res, next) => {
+export const listarUsuarios = async (req, res, next) => {
   try {
-    const { 
-      page = 1, 
-      limit = 10, 
-      tipo,
-      search 
-    } = req.query;
+    const { tipo } = req.query;
+    const usuarios = await Usuario.listar(tipo);
     
-    const offset = (page - 1) * limit;
-
-    let query = supabase
-      .from('usuarios')
-      .select('*', { count: 'exact' })
-      .range(offset, offset + limit - 1)
-      .order('nome');
-
-    if (tipo) {
-      query = query.eq('tipo', tipo);
-    }
-
-    if (search) {
-      query = query.or(`nome.ilike.%${search}%,email.ilike.%${search}%`);
-    }
-
-    const { data, error, count } = await query;
-
-    if (error) throw error;
-
-    res.json({
-      usuarios: data,
-      pagination: {
-        total: count,
-        page: parseInt(page),
-        totalPages: Math.ceil(count / limit)
-      }
-    });
+    // Remove o campo senha dos resultados
+    const usuariosSemSenha = usuarios.map(({ senha, ...usuario }) => usuario);
+    
+    res.json(usuariosSemSenha);
   } catch (error) {
     next(error);
   }
 };
 
-export const getUsuario = async (req, res, next) => {
+export const buscarUsuario = async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from('usuarios')
-      .select('*')
-      .eq('id', req.params.id)
-      .single();
-
-    if (error) throw error;
-    if (!data) {
-      const error = new Error('Usuário não encontrado');
-      error.status = 404;
-      throw error;
-    }
+    const usuario = await Usuario.buscarPorId(req.params.id);
     
-    res.json(data);
+    if (!usuario) {
+      return res.status(404).json({ erro: 'Usuário não encontrado' });
+    }
+
+    // Remove o campo senha
+    const { senha, ...usuarioSemSenha } = usuario;
+    
+    res.json(usuarioSemSenha);
   } catch (error) {
     next(error);
   }
 };
 
-export const createUsuario = async (req, res, next) => {
+export const criarUsuario = async (req, res, next) => {
   try {
-    const validatedData = await UsuarioSchema.parseAsync(req.body);
+    const { nome, email, senha, telefone, tipo = 'cliente' } = req.body;
 
-    // Criar usuário no auth do Supabase
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: validatedData.email,
-      password: validatedData.senha
+    // Verifica se já existe algum usuário no sistema
+    const totalUsuarios = await Usuario.contar();
+
+    // Se não houver usuários, permite criar o primeiro admin
+    // Caso contrário, verifica as permissões
+    // if (totalUsuarios > 0 && tipo !== 'cliente' && (!req.userTipo || req.userTipo !== 'admin')) {
+    //   return res.status(403).json({ erro: 'Sem permissão para criar este tipo de usuário' });
+    // }
+
+    // Verifica se o email já existe
+    const usuarioExistente = await Usuario.buscarPorEmail(email);
+    if (usuarioExistente) {
+      return res.status(400).json({ erro: 'Email já cadastrado' });
+    }
+
+    // Criptografa a senha
+    const salt = await bcrypt.genSalt(10);
+    const senhaCriptografada = await bcrypt.hash(senha, salt);
+
+    const usuario = await Usuario.criar({
+      nome,
+      email,
+      senha: senhaCriptografada,
+      telefone,
+      tipo
     });
 
-    if (authError) throw authError;
+    // Remove o campo senha do retorno
+    const { senha: _, ...usuarioSemSenha } = usuario;
 
-    // Criar registro na tabela usuarios
-    const { data, error } = await supabase
-      .from('usuarios')
-      .insert([{
-        id: authData.user.id, // Usar o mesmo ID gerado pelo auth
-        email: validatedData.email,
-        nome: validatedData.nome,
-        telefone: validatedData.telefone,
-        tipo: validatedData.tipo,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }])
-      .select()
-      .single();
-
-    if (error) throw error;
-    res.status(201).json(data);
+    res.status(201).json(usuarioSemSenha);
   } catch (error) {
     next(error);
   }
 };
 
-export const updateUsuario = async (req, res, next) => {
+export const atualizarUsuario = async (req, res, next) => {
   try {
-    const validatedData = await UsuarioUpdateSchema.parseAsync(req.body);
+    const { id } = req.params;
+    const { nome, email, senha, telefone, tipo } = req.body;
 
-    const { data, error } = await supabase
-      .from('usuarios')
-      .update({
-        ...validatedData,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', req.params.id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    if (!data) {
-      const error = new Error('Usuário não encontrado');
-      error.status = 404;
-      throw error;
+    // Verifica se o usuário existe
+    const usuario = await Usuario.buscarPorId(id);
+    if (!usuario) {
+      return res.status(404).json({ erro: 'Usuário não encontrado' });
     }
+
+    // Verifica permissões
+    if (req.userId !== parseInt(id) && req.userTipo !== 'admin') {
+      return res.status(403).json({ erro: 'Sem permissão para atualizar este usuário' });
+    }
+
+    // Se não for admin, não pode mudar o tipo
+    if (tipo && tipo !== usuario.tipo && req.userTipo !== 'admin') {
+      return res.status(403).json({ erro: 'Sem permissão para alterar o tipo de usuário' });
+    }
+
+    const dados = { nome, email, telefone, tipo };
+
+    // Se foi enviada uma nova senha, criptografa
+    if (senha) {
+      const salt = await bcrypt.genSalt(10);
+      dados.senha = await bcrypt.hash(senha, salt);
+    }
+
+    const usuarioAtualizado = await Usuario.atualizar(id, dados);
     
-    res.json(data);
+    // Remove o campo senha do retorno
+    const { senha: _, ...usuarioSemSenha } = usuarioAtualizado;
+
+    res.json(usuarioSemSenha);
   } catch (error) {
     next(error);
   }
 };
 
-export const deleteUsuario = async (req, res, next) => {
+export const deletarUsuario = async (req, res, next) => {
   try {
-    // Primeiro deletar o usuário do auth
-    const { error: authError } = await supabase.auth.admin.deleteUser(
-      req.params.id
-    );
+    const { id } = req.params;
 
-    if (authError) throw authError;
+    // Apenas admin pode deletar usuários
+    if (req.userTipo !== 'admin') {
+      return res.status(403).json({ erro: 'Sem permissão para deletar usuários' });
+    }
 
-    // Depois deletar da tabela usuarios
-    const { error } = await supabase
-      .from('usuarios')
-      .delete()
-      .eq('id', req.params.id);
+    const usuario = await Usuario.buscarPorId(id);
+    if (!usuario) {
+      return res.status(404).json({ erro: 'Usuário não encontrado' });
+    }
 
-    if (error) throw error;
-    res.json({ message: 'Usuário removido com sucesso' });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Endpoints adicionais para corretores
-export const getCorretores = async (req, res, next) => {
-  try {
-    const { data, error } = await supabase
-      .from('usuarios')
-      .select('*')
-      .eq('tipo', 'corretor')
-      .order('nome');
-
-    if (error) throw error;
-    res.json(data);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateSenha = async (req, res, next) => {
-  try {
-    const { senha_atual, nova_senha } = req.body;
-
-    const { error } = await supabase.auth.updateUser({
-      password: nova_senha
-    });
-
-    if (error) throw error;
-    res.json({ message: 'Senha atualizada com sucesso' });
+    await Usuario.deletar(id);
+    res.status(204).send();
   } catch (error) {
     next(error);
   }

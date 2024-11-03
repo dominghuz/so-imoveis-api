@@ -1,61 +1,44 @@
-import supabase from '../config/supabase.js';
-import { TransacaoSchema } from '../models/Transacao.js';
+import Transacao from '../models/Transacao.js';
+import Imovel from '../models/Imovel.js';
 
-export const getTransacoes = async (req, res, next) => {
+export const listarTransacoes = async (req, res, next) => {
   try {
     const { 
-      page = 1, 
-      limit = 10, 
+      tipo,
+      status,
+      corretor_id,
+      cliente_id,
+      data_inicio,
+      data_fim,
+      page = 1,
+      limit = 10
+    } = req.query;
+
+    const filtros = {
       tipo,
       status,
       data_inicio,
       data_fim,
-      corretor_id 
-    } = req.query;
-    
-    const offset = (page - 1) * limit;
+      limit: parseInt(limit),
+      offset: (page - 1) * limit
+    };
 
-    let query = supabase
-      .from('transacoes')
-      .select(`
-        *,
-        imovel:imovel_id(*),
-        cliente:cliente_id(*),
-        corretor:corretor_id(*)
-      `, { count: 'exact' })
-      .range(offset, offset + limit - 1)
-      .order('created_at', { ascending: false });
-
-    if (tipo) {
-      query = query.eq('tipo', tipo);
+    // Restringe visualização baseado no tipo de usuário
+    if (req.userTipo === 'corretor') {
+      filtros.corretor_id = req.userId;
+    } else if (req.userTipo === 'cliente') {
+      filtros.cliente_id = req.userId;
     }
 
-    if (status) {
-      query = query.eq('status', status);
-    }
-
-    if (data_inicio) {
-      query = query.gte('data_inicio', data_inicio);
-    }
-
-    if (data_fim) {
-      query = query.lte('data_fim', data_fim);
-    }
-
-    if (corretor_id) {
-      query = query.eq('corretor_id', corretor_id);
-    }
-
-    const { data, error, count } = await query;
-
-    if (error) throw error;
+    const transacoes = await Transacao.listar(filtros);
+    const total = await Transacao.contar(filtros);
 
     res.json({
-      transacoes: data,
+      transacoes,
       pagination: {
-        total: count,
+        total,
         page: parseInt(page),
-        totalPages: Math.ceil(count / limit)
+        totalPages: Math.ceil(total / limit)
       }
     });
   } catch (error) {
@@ -63,161 +46,127 @@ export const getTransacoes = async (req, res, next) => {
   }
 };
 
-export const getTransacao = async (req, res, next) => {
+export const buscarTransacao = async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from('transacoes')
-      .select(`
-        *,
-        imovel:imovel_id(*),
-        cliente:cliente_id(*),
-        corretor:corretor_id(*)
-      `)
-      .eq('id', req.params.id)
-      .single();
+    const transacao = await Transacao.buscarPorId(req.params.id);
+    
+    if (!transacao) {
+      return res.status(404).json({ erro: 'Transação não encontrada' });
+    }
 
-    if (error) throw error;
-    if (!data) {
-      const error = new Error('Transação não encontrada');
-      error.status = 404;
-      throw error;
+    // Verifica permissão
+    if (req.userTipo !== 'admin' && 
+        req.userId !== transacao.cliente_id && 
+        req.userId !== transacao.corretor_id) {
+      return res.status(403).json({ erro: 'Sem permissão para ver esta transação' });
     }
     
-    res.json(data);
+    res.json(transacao);
   } catch (error) {
     next(error);
   }
 };
 
-export const createTransacao = async (req, res, next) => {
+export const criarTransacao = async (req, res, next) => {
   try {
-    const validatedData = await TransacaoSchema.parseAsync(req.body);
+    const { 
+      imovel_id, 
+      cliente_id, 
+      tipo, 
+      valor,
+      data_inicio,
+      data_fim,
+      contrato_url 
+    } = req.body;
 
-    const { data, error } = await supabase
-      .from('transacoes')
-      .insert([{
-        ...validatedData,
-        corretor_id: req.user?.id,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }])
-      .select()
-      .single();
-
-    if (error) throw error;
-    res.status(201).json(data);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateTransacao = async (req, res, next) => {
-  try {
-    const validatedData = await TransacaoSchema.partial().parseAsync(req.body);
-
-    const { data, error } = await supabase
-      .from('transacoes')
-      .update({
-        ...validatedData,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', req.params.id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    if (!data) {
-      const error = new Error('Transação não encontrada');
-      error.status = 404;
-      throw error;
+    // Verifica se o imóvel existe e está disponível
+    const imovel = await Imovel.buscarPorId(imovel_id);
+    if (!imovel) {
+      return res.status(404).json({ erro: 'Imóvel não encontrado' });
     }
+    if (imovel.status !== 'disponivel') {
+      return res.status(400).json({ erro: 'Imóvel não está disponível' });
+    }
+
+    const transacao = await Transacao.criar({
+      imovel_id,
+      cliente_id,
+      corretor_id: req.userId,
+      tipo,
+      valor,
+      data_inicio,
+      data_fim,
+      contrato_url,
+      status: 'pendente'
+    });
+
+    // Atualiza status do imóvel
+    await Imovel.atualizar(imovel_id, { 
+      status: tipo === 'venda' ? 'vendido' : 'alugado' 
+    });
+
+    res.status(201).json(transacao);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const atualizarTransacao = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { status, contrato_url } = req.body;
     
-    res.json(data);
+    const transacao = await Transacao.buscarPorId(id);
+    if (!transacao) {
+      return res.status(404).json({ erro: 'Transação não encontrada' });
+    }
+
+    // Apenas corretor responsável ou admin podem atualizar
+    if (req.userTipo !== 'admin' && req.userId !== transacao.corretor_id) {
+      return res.status(403).json({ erro: 'Sem permissão para atualizar esta transação' });
+    }
+
+    const transacaoAtualizada = await Transacao.atualizar(id, {
+      status,
+      contrato_url
+    });
+
+    // Se a transação for cancelada, volta o status do imóvel para disponível
+    if (status === 'cancelado') {
+      await Imovel.atualizar(transacao.imovel_id, { status: 'disponivel' });
+    }
+
+    res.json(transacaoAtualizada);
   } catch (error) {
     next(error);
   }
 };
 
-export const deleteTransacao = async (req, res, next) => {
+export const deletarTransacao = async (req, res, next) => {
   try {
-    const { error } = await supabase
-      .from('transacoes')
-      .delete()
-      .eq('id', req.params.id);
-
-    if (error) throw error;
-    res.json({ message: 'Transação removida com sucesso' });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getBalanco = async (req, res, next) => {
-  try {
-    const { data_inicio, data_fim } = req.query;
+    const { id } = req.params;
     
-    let query = supabase
-      .from('transacoes')
-      .select('tipo, valor');
-
-    if (data_inicio) {
-      query = query.gte('data_inicio', data_inicio);
+    // Apenas admin pode deletar
+    if (req.userTipo !== 'admin') {
+      return res.status(403).json({ erro: 'Sem permissão para deletar transações' });
     }
 
-    if (data_fim) {
-      query = query.lte('data_fim', data_fim);
+    const transacao = await Transacao.buscarPorId(id);
+    if (!transacao) {
+      return res.status(404).json({ erro: 'Transação não encontrada' });
     }
 
-    const { data, error } = await query;
-
-    if (error) throw error;
-
-    const balanco = data.reduce((acc, curr) => {
-      const valor = parseFloat(curr.valor);
-      return curr.tipo === 'venda' ? acc + valor : acc - valor;
-    }, 0);
-
-    res.json({ balanco });
+    await Transacao.deletar(id);
+    res.status(204).send();
   } catch (error) {
     next(error);
   }
 };
 
-export const getRelatorioTransacoes = async (req, res, next) => {
+export const estatisticasTransacoes = async (req, res, next) => {
   try {
-    const { data_inicio, data_fim } = req.query;
-    
-    let query = supabase
-      .from('transacoes')
-      .select(`
-        *,
-        imovel:imovel_id(*),
-        cliente:cliente_id(*),
-        corretor:corretor_id(*)
-      `)
-      .order('data_inicio', { ascending: false });
-
-    if (data_inicio) {
-      query = query.gte('data_inicio', data_inicio);
-    }
-
-    if (data_fim) {
-      query = query.lte('data_fim', data_fim);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-
-    const relatorio = {
-      total_transacoes: data.length,
-      total_vendas: data.filter(t => t.tipo === 'venda').length,
-      total_alugueis: data.filter(t => t.tipo === 'aluguel').length,
-      valor_total: data.reduce((acc, curr) => acc + parseFloat(curr.valor), 0),
-      transacoes: data
-    };
-
-    res.json(relatorio);
+    const stats = await Transacao.estatisticas();
+    res.json(stats);
   } catch (error) {
     next(error);
   }

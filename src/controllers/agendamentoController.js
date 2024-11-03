@@ -1,56 +1,44 @@
-import supabase from '../config/supabase.js';
-import { AgendamentoSchema } from '../models/Agendamento.js';
+import Agendamento from '../models/Agendamento.js';
+import Imovel from '../models/Imovel.js';
+import Usuario from '../models/Usuario.js';
 
-export const getAgendamentos = async (req, res, next) => {
+export const listarAgendamentos = async (req, res, next) => {
   try {
     const { 
-      page = 1, 
-      limit = 10, 
+      data,
       status,
-      data_inicio,
-      data_fim,
-      corretor_id 
+      corretor_id,
+      cliente_id,
+      imovel_id,
+      page = 1,
+      limit = 10
     } = req.query;
-    
-    const offset = (page - 1) * limit;
 
-    let query = supabase
-      .from('agendamentos')
-      .select(`
-        *,
-        imovel:imovel_id(*),
-        cliente:cliente_id(*),
-        corretor:corretor_id(*)
-      `, { count: 'exact' })
-      .range(offset, offset + limit - 1)
-      .order('data_hora', { ascending: true });
+    // Se não for admin, limita a visualização
+    const filtros = {
+      data,
+      status,
+      imovel_id,
+      limit: parseInt(limit),
+      offset: (page - 1) * limit
+    };
 
-    if (status) {
-      query = query.eq('status', status);
+    // Restringe visualização baseado no tipo de usuário
+    if (req.userTipo === 'corretor') {
+      filtros.corretor_id = req.userId;
+    } else if (req.userTipo === 'cliente') {
+      filtros.cliente_id = req.userId;
     }
 
-    if (data_inicio) {
-      query = query.gte('data_hora', data_inicio);
-    }
-
-    if (data_fim) {
-      query = query.lte('data_hora', data_fim);
-    }
-
-    if (corretor_id) {
-      query = query.eq('corretor_id', corretor_id);
-    }
-
-    const { data, error, count } = await query;
-
-    if (error) throw error;
+    const agendamentos = await Agendamento.listar(filtros);
+    const total = await Agendamento.contar(filtros);
 
     res.json({
-      agendamentos: data,
+      agendamentos,
       pagination: {
-        total: count,
+        total,
         page: parseInt(page),
-        totalPages: Math.ceil(count / limit)
+        totalPages: Math.ceil(total / limit)
       }
     });
   } catch (error) {
@@ -58,156 +46,148 @@ export const getAgendamentos = async (req, res, next) => {
   }
 };
 
-export const getAgendamento = async (req, res, next) => {
+export const buscarAgendamento = async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from('agendamentos')
-      .select(`
-        *,
-        imovel:imovel_id(*),
-        cliente:cliente_id(*),
-        corretor:corretor_id(*)
-      `)
-      .eq('id', req.params.id)
-      .single();
-
-    if (error) throw error;
-    if (!data) {
-      const error = new Error('Agendamento não encontrado');
-      error.status = 404;
-      throw error;
-    }
+    const agendamento = await Agendamento.buscarPorId(req.params.id);
     
-    res.json(data);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const createAgendamento = async (req, res, next) => {
-  try {
-    const validatedData = await AgendamentoSchema.parseAsync(req.body);
-
-    // Verificar disponibilidade do horário
-    const { data: conflito } = await supabase
-      .from('agendamentos')
-      .select('id')
-      .eq('imovel_id', validatedData.imovel_id)
-      .eq('data_hora', validatedData.data_hora)
-      .eq('status', 'AGENDADO')
-      .single();
-
-    if (conflito) {
-      const error = new Error('Horário já agendado para este imóvel');
-      error.status = 400;
-      throw error;
+    if (!agendamento) {
+      return res.status(404).json({ erro: 'Agendamento não encontrado' });
     }
 
-    const { data, error } = await supabase
-      .from('agendamentos')
-      .insert([{
-        ...validatedData,
-        corretor_id: req.user?.id,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }])
-      .select()
-      .single();
-
-    if (error) throw error;
-    res.status(201).json(data);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateAgendamento = async (req, res, next) => {
-  try {
-    const validatedData = await AgendamentoSchema.partial().parseAsync(req.body);
-
-    const { data, error } = await supabase
-      .from('agendamentos')
-      .update({
-        ...validatedData,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', req.params.id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    if (!data) {
-      const error = new Error('Agendamento não encontrado');
-      error.status = 404;
-      throw error;
+    // Verifica permissão
+    if (req.userTipo !== 'admin' && 
+        req.userId !== agendamento.cliente_id && 
+        req.userId !== agendamento.corretor_id) {
+      return res.status(403).json({ erro: 'Sem permissão para ver este agendamento' });
     }
     
-    res.json(data);
+    res.json(agendamento);
   } catch (error) {
     next(error);
   }
 };
 
-export const cancelarAgendamento = async (req, res, next) => {
+export const criarAgendamento = async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from('agendamentos')
-      .update({
-        status: 'CANCELADO',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', req.params.id)
-      .select()
-      .single();
+    const { imovel_id, corretor_id, data, hora, observacoes } = req.body;
 
-    if (error) throw error;
-    if (!data) {
-      const error = new Error('Agendamento não encontrado');
-      error.status = 404;
-      throw error;
+    // Validações básicas
+    if (!imovel_id || !corretor_id || !data || !hora) {
+      return res.status(400).json({ 
+        erro: 'Todos os campos obrigatórios devem ser fornecidos' 
+      });
     }
-    
-    res.json(data);
+
+    // Verifica se o imóvel existe e está disponível
+    const imovel = await Imovel.buscarPorId(imovel_id);
+    if (!imovel) {
+      return res.status(404).json({ erro: 'Imóvel não encontrado' });
+    }
+    if (imovel.status !== 'disponivel') {
+      return res.status(400).json({ erro: 'Imóvel não está disponível' });
+    }
+
+    // Verifica se o corretor existe
+    const corretor = await Usuario.buscarPorId(corretor_id);
+    if (!corretor || corretor.tipo !== 'corretor') {
+      return res.status(404).json({ erro: 'Corretor não encontrado' });
+    }
+
+    // Verifica disponibilidade do horário
+    const disponivel = await Agendamento.verificarDisponibilidade(data, hora, corretor_id);
+    if (!disponivel) {
+      return res.status(400).json({ erro: 'Horário não disponível para este corretor' });
+    }
+
+    // Cria o agendamento
+    const agendamento = await Agendamento.criar({
+      imovel_id,
+      cliente_id: req.userId,
+      corretor_id,
+      data,
+      hora,
+      observacoes,
+      status: 'pendente'
+    });
+
+    res.status(201).json(agendamento);
   } catch (error) {
     next(error);
   }
 };
 
-export const getAgendamentosByImovel = async (req, res, next) => {
+export const atualizarAgendamento = async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from('agendamentos')
-      .select(`
-        *,
-        cliente:cliente_id(*),
-        corretor:corretor_id(*)
-      `)
-      .eq('imovel_id', req.params.id)
-      .order('data_hora', { ascending: true });
-
-    if (error) throw error;
+    const { id } = req.params;
+    const { status, observacoes } = req.body;
     
-    res.json(data);
+    const agendamento = await Agendamento.buscarPorId(id);
+    if (!agendamento) {
+      return res.status(404).json({ erro: 'Agendamento não encontrado' });
+    }
+
+    // Verifica permissões
+    if (req.userTipo !== 'admin' && req.userId !== agendamento.corretor_id) {
+      return res.status(403).json({ erro: 'Sem permissão para atualizar este agendamento' });
+    }
+
+    // Valida o status
+    const statusValidos = ['pendente', 'confirmado', 'cancelado', 'realizado'];
+    if (status && !statusValidos.includes(status)) {
+      return res.status(400).json({ erro: 'Status inválido' });
+    }
+
+    const agendamentoAtualizado = await Agendamento.atualizar(id, {
+      status,
+      observacoes,
+      updated_at: new Date()
+    });
+
+    res.json(agendamentoAtualizado);
   } catch (error) {
     next(error);
   }
 };
 
-export const getAgendamentosByCorretor = async (req, res, next) => {
+export const deletarAgendamento = async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from('agendamentos')
-      .select(`
-        *,
-        imovel:imovel_id(*),
-        cliente:cliente_id(*)
-      `)
-      .eq('corretor_id', req.params.id)
-      .order('data_hora', { ascending: true });
-
-    if (error) throw error;
+    const { id } = req.params;
     
-    res.json(data);
+    const agendamento = await Agendamento.buscarPorId(id);
+    if (!agendamento) {
+      return res.status(404).json({ erro: 'Agendamento não encontrado' });
+    }
+
+    // Apenas admin pode deletar
+    if (req.userTipo !== 'admin') {
+      return res.status(403).json({ erro: 'Sem permissão para deletar agendamentos' });
+    }
+
+    await Agendamento.deletar(id);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const listarAgendamentosPorPeriodo = async (req, res, next) => {
+  try {
+    const { data_inicio, data_fim } = req.query;
+
+    // Validação das datas
+    if (!data_inicio || !data_fim) {
+      return res.status(400).json({ erro: 'Data inicial e final são obrigatórias' });
+    }
+
+    const corretor_id = req.userTipo === 'corretor' ? req.userId : null;
+
+    const agendamentos = await Agendamento.listarPorPeriodo(
+      data_inicio,
+      data_fim,
+      corretor_id
+    );
+
+    res.json(agendamentos);
   } catch (error) {
     next(error);
   }
