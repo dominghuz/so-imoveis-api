@@ -11,7 +11,7 @@ import contratosRoutes from './routes/contratos.js';
 import metricasRoutes from './routes/metricas.js';
 import usuariosRoutes from './routes/usuarios.js';
 import { errorHandler } from './middleware/errorHandler.js';
-import Imovel from './models/Imovel.js';
+// import Imovel from './models/Imovel.js';
 
 dotenv.config();
 
@@ -50,8 +50,8 @@ const PORT = process.env.PORT || 5000;
 const startServer = async () => {
   try {
     // Verifica estrutura da tabela
-    console.log('Verificando estrutura da tabela imoveis...');
-    await Imovel.verificarEstrutura();
+    // console.log('Verificando estrutura da tabela imoveis...');
+    // await Imovel.verificarEstrutura();
     
     app.listen(PORT, () => {
       console.log(`Servidor rodando na porta ${PORT}`);

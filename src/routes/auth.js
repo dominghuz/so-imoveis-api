@@ -1,9 +1,10 @@
 import express from 'express';
-import * as authController from '../controllers/authController.js';
+import { login, registro } from '../controllers/authController.js';
 
 const router = express.Router();
 
-router.post('/login', authController.login);
-router.post('/register', authController.register);
+// Rotas públicas de autenticação
+router.post('/login', login);
+router.post('/registro', registro);
 
 export default router; 

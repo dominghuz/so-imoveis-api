@@ -1,27 +1,18 @@
-import supabase from '../config/supabase.js';
+import knex from '../database/connection.js';
 
-export const getDashboardStats = async (req, res, next) => {
+export const getDashboardStats = async (req, res) => {
   try {
     // Estatísticas de Imóveis
-    const { data: imoveis, error: imoveisError } = await supabase
-      .from('imoveis')
-      .select('id, status, tipo, finalidade');
-
-    if (imoveisError) throw imoveisError;
+    const imoveis = await knex('imoveis')
+      .select('id', 'status', 'tipo', 'finalidade');
 
     // Estatísticas de Transações
-    const { data: transacoes, error: transacoesError } = await supabase
-      .from('transacoes')
+    const transacoes = await knex('transacoes')
       .select('*');
-
-    if (transacoesError) throw transacoesError;
 
     // Estatísticas de Agendamentos
-    const { data: agendamentos, error: agendamentosError } = await supabase
-      .from('agendamentos')
+    const agendamentos = await knex('agendamentos')
       .select('*');
-
-    if (agendamentosError) throw agendamentosError;
 
     const stats = {
       imoveis: {
@@ -38,7 +29,7 @@ export const getDashboardStats = async (req, res, next) => {
         total: transacoes.length,
         vendas: transacoes.filter(t => t.tipo === 'venda').length,
         alugueis: transacoes.filter(t => t.tipo === 'aluguel').length,
-        valor_total: transacoes.reduce((acc, curr) => acc + parseFloat(curr.valor), 0)
+        valor_total: transacoes.reduce((acc, curr) => acc + Number(curr.valor), 0)
       },
       agendamentos: {
         total: agendamentos.length,
@@ -48,9 +39,124 @@ export const getDashboardStats = async (req, res, next) => {
       }
     };
 
-    res.json(stats);
+    res.json({ success: true, data: stats });
   } catch (error) {
-    next(error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+export const getComissoesPorCorretor = async (req, res) => {
+  try {
+    const { data_inicio, data_fim } = req.query;
+    
+    let query = knex('transacoes')
+      .select(
+        'transacoes.*',
+        'usuarios.nome as corretor_nome',
+        'usuarios.email as corretor_email'
+      )
+      .join('usuarios', 'transacoes.corretor_id', 'usuarios.id')
+      .where('usuarios.tipo', 'corretor');
+
+    if (data_inicio) {
+      query.where('transacoes.data_inicio', '>=', data_inicio);
+    }
+    if (data_fim) {
+      query.where('transacoes.data_inicio', '<=', data_fim);
+    }
+
+    const transacoes = await query;
+
+    const comissoes = transacoes.reduce((acc, trans) => {
+      if (!acc[trans.corretor_id]) {
+        acc[trans.corretor_id] = {
+          corretor_id: trans.corretor_id,
+          corretor_nome: trans.corretor_nome,
+          corretor_email: trans.corretor_email,
+          total_transacoes: 0,
+          valor_total: 0,
+          comissao_total: 0
+        };
+      }
+      
+      acc[trans.corretor_id].total_transacoes++;
+      acc[trans.corretor_id].valor_total += Number(trans.valor);
+      
+      // Comissão: 5% para vendas, 10% para aluguéis
+      const comissao = trans.tipo === 'venda' 
+        ? Number(trans.valor) * 0.05 
+        : Number(trans.valor) * 0.10;
+      
+      acc[trans.corretor_id].comissao_total += comissao;
+      
+      return acc;
+    }, {});
+
+    res.json({ 
+      success: true, 
+      data: Object.values(comissoes) 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+export const getConversaoPorCorretor = async (req, res) => {
+  try {
+    // Buscar agendamentos por corretor
+    const agendamentos = await knex('agendamentos')
+      .select(
+        'agendamentos.*',
+        'usuarios.nome as corretor_nome'
+      )
+      .join('usuarios', 'agendamentos.corretor_id', 'usuarios.id')
+      .where('usuarios.tipo', 'corretor');
+
+    // Buscar transações concluídas por corretor
+    const transacoes = await knex('transacoes')
+      .select('corretor_id')
+      .where('status', 'concluido');
+
+    const conversao = agendamentos.reduce((acc, agend) => {
+      if (!acc[agend.corretor_id]) {
+        acc[agend.corretor_id] = {
+          corretor_id: agend.corretor_id,
+          corretor_nome: agend.corretor_nome,
+          total_visitas: 0,
+          visitas_realizadas: 0,
+          vendas_alugueis: 0,
+          taxa_conversao: 0
+        };
+      }
+
+      acc[agend.corretor_id].total_visitas++;
+      if (agend.status === 'realizado') {
+        acc[agend.corretor_id].visitas_realizadas++;
+      }
+
+      return acc;
+    }, {});
+
+    // Adicionar transações concluídas
+    transacoes.forEach(trans => {
+      if (conversao[trans.corretor_id]) {
+        conversao[trans.corretor_id].vendas_alugueis++;
+      }
+    });
+
+    // Calcular taxa de conversão
+    Object.values(conversao).forEach(c => {
+      c.taxa_conversao = c.visitas_realizadas > 0 
+        ? (c.vendas_alugueis / c.visitas_realizadas) * 100 
+        : 0;
+    });
+
+    res.json({ 
+      success: true, 
+      data: Object.values(conversao) 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
@@ -58,20 +164,19 @@ export const getVendasPorPeriodo = async (req, res, next) => {
   try {
     const { data_inicio, data_fim } = req.query;
     
-    let query = supabase
-      .from('transacoes')
+    let query = knex('transacoes')
       .select('*')
-      .eq('tipo', 'venda');
+      .where('tipo', 'venda');
 
     if (data_inicio) {
-      query = query.gte('data_inicio', data_inicio);
+      query.where('data_inicio', '>=', data_inicio);
     }
     if (data_fim) {
-      query = query.lte('data_fim', data_fim);
+      query.where('data_fim', '<=', data_fim);
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
+    const data = await query;
+    if (data.error) throw data.error;
 
     res.json(data);
   } catch (error) {
@@ -83,20 +188,19 @@ export const getLocacoesPorPeriodo = async (req, res, next) => {
   try {
     const { data_inicio, data_fim } = req.query;
     
-    let query = supabase
-      .from('transacoes')
+    let query = knex('transacoes')
       .select('*')
-      .eq('tipo', 'aluguel');
+      .where('tipo', 'aluguel');
 
     if (data_inicio) {
-      query = query.gte('data_inicio', data_inicio);
+      query.where('data_inicio', '>=', data_inicio);
     }
     if (data_fim) {
-      query = query.lte('data_fim', data_fim);
+      query.where('data_fim', '<=', data_fim);
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
+    const data = await query;
+    if (data.error) throw data.error;
 
     res.json(data);
   } catch (error) {
@@ -106,10 +210,9 @@ export const getLocacoesPorPeriodo = async (req, res, next) => {
 
 export const getImoveisPorTipo = async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from('imoveis')
+    const { data, error } = await knex('imoveis')
       .select('tipo, status')
-      .order('tipo');
+      .orderBy('tipo');
 
     if (error) throw error;
 
@@ -130,10 +233,9 @@ export const getImoveisPorTipo = async (req, res, next) => {
 
 export const getImoveisPorStatus = async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from('imoveis')
+    const { data, error } = await knex('imoveis')
       .select('status, tipo')
-      .order('status');
+      .orderBy('status');
 
     if (error) throw error;
 
@@ -156,25 +258,24 @@ export const getTransacoesPorPeriodo = async (req, res, next) => {
   try {
     const { data_inicio, data_fim } = req.query;
     
-    let query = supabase
-      .from('transacoes')
+    let query = knex('transacoes')
       .select(`
         *,
         imovel:imovel_id(*),
         cliente:cliente_id(*),
         corretor:corretor_id(*)
       `)
-      .order('data_inicio');
+      .orderBy('data_inicio');
 
     if (data_inicio) {
-      query = query.gte('data_inicio', data_inicio);
+      query.where('data_inicio', '>=', data_inicio);
     }
     if (data_fim) {
-      query = query.lte('data_fim', data_fim);
+      query.where('data_fim', '<=', data_fim);
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
+    const data = await query;
+    if (data.error) throw data.error;
 
     res.json(data);
   } catch (error) {
@@ -182,60 +283,14 @@ export const getTransacoesPorPeriodo = async (req, res, next) => {
   }
 };
 
-export const getComissoesPorCorretor = async (req, res, next) => {
-  try {
-    const { data_inicio, data_fim } = req.query;
-    
-    let query = supabase
-      .from('transacoes')
-      .select(`
-        *,
-        corretor:corretor_id(*)
-      `);
-
-    if (data_inicio) {
-      query = query.gte('data_inicio', data_inicio);
-    }
-    if (data_fim) {
-      query = query.lte('data_fim', data_fim);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-    const comissoes = data.reduce((acc, trans) => {
-      const corretor = trans.corretor;
-      if (!acc[corretor.id]) {
-        acc[corretor.id] = {
-          corretor: corretor,
-          total_transacoes: 0,
-          valor_total: 0,
-          comissao_total: 0
-        };
-      }
-      acc[corretor.id].total_transacoes++;
-      acc[corretor.id].valor_total += parseFloat(trans.valor);
-      // Calcula comissão (exemplo: 5% para vendas, 10% primeiro aluguel)
-      const comissao = trans.tipo === 'venda' ? trans.valor * 0.05 : trans.valor * 0.1;
-      acc[corretor.id].comissao_total += comissao;
-      return acc;
-    }, {});
-
-    res.json(Object.values(comissoes));
-  } catch (error) {
-    next(error);
-  }
-};
-
 export const getVisitasPorImovel = async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from('agendamentos')
+    const { data, error } = await knex('agendamentos')
       .select(`
         *,
         imovel:imovel_id(*)
       `)
-      .order('data');
+      .orderBy('data');
 
     if (error) throw error;
 
@@ -260,52 +315,3 @@ export const getVisitasPorImovel = async (req, res, next) => {
     next(error);
   }
 };
-
-export const getConversaoPorCorretor = async (req, res, next) => {
-  try {
-    // Buscar agendamentos e transações
-    const [agendamentos, transacoes] = await Promise.all([
-      supabase.from('agendamentos').select('*,corretor:corretor_id(*)'),
-      supabase.from('transacoes').select('*,corretor:corretor_id(*)')
-    ]);
-
-    if (agendamentos.error) throw agendamentos.error;
-    if (transacoes.error) throw transacoes.error;
-
-    const conversao = agendamentos.data.reduce((acc, agend) => {
-      const corretor = agend.corretor;
-      if (!acc[corretor.id]) {
-        acc[corretor.id] = {
-          corretor: corretor,
-          total_visitas: 0,
-          visitas_realizadas: 0,
-          vendas_alugueis: 0,
-          taxa_conversao: 0
-        };
-      }
-      acc[corretor.id].total_visitas++;
-      if (agend.status === 'realizado') {
-        acc[corretor.id].visitas_realizadas++;
-      }
-      return acc;
-    }, {});
-
-    // Adicionar transações concluídas
-    transacoes.data.forEach(trans => {
-      if (trans.status === 'concluido' && conversao[trans.corretor.id]) {
-        conversao[trans.corretor.id].vendas_alugueis++;
-      }
-    });
-
-    // Calcular taxa de conversão
-    Object.values(conversao).forEach(c => {
-      c.taxa_conversao = c.visitas_realizadas > 0 
-        ? (c.vendas_alugueis / c.visitas_realizadas) * 100 
-        : 0;
-    });
-
-    res.json(Object.values(conversao));
-  } catch (error) {
-    next(error);
-  }
-}; 

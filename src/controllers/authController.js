@@ -2,112 +2,101 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import Usuario from '../models/Usuario.js';
 
-export const login = async (req, res) => {
+export const login = async (req, res, next) => {
   try {
     const { email, senha } = req.body;
 
     // Validação básica
     if (!email || !senha) {
-      return res.status(400).json({ 
-        erro: 'Email e senha são obrigatórios' 
-      });
+      return res.status(400).json({ erro: 'Email e senha são obrigatórios' });
     }
 
-    // Buscar usuário pelo email
+    // Buscar usuário
     const usuario = await Usuario.buscarPorEmail(email);
     if (!usuario) {
-      return res.status(401).json({ 
-        erro: 'Usuário não encontrado' 
-      });
+      return res.status(401).json({ erro: 'Credenciais inválidas' });
     }
 
     // Verificar senha
     const senhaCorreta = await bcrypt.compare(senha, usuario.senha);
     if (!senhaCorreta) {
-      return res.status(401).json({ 
-        erro: 'Senha incorreta' 
-      });
+      return res.status(401).json({ erro: 'Credenciais inválidas' });
     }
 
-    // Gerar token incluindo o tipo do usuário
+    // Gerar token
     const token = jwt.sign(
       { 
         id: usuario.id,
-        nome: usuario.nome,
-        email: usuario.email,
-        tipo: usuario.tipo // Incluindo o tipo do usuário no token
+        tipo: usuario.tipo 
       },
       process.env.JWT_SECRET,
-      { expiresIn: '1d' }
+      { expiresIn: '24h' }
     );
 
-    // Retornar dados do usuário e token
-    const { senha: _, ...usuarioSemSenha } = usuario;
-    return res.status(200).json({
-      usuario: usuarioSemSenha,
-      token
+    // Retornar token e dados básicos do usuário
+    res.json({
+      token,
+      usuario: {
+        id: usuario.id,
+        nome: usuario.nome,
+        email: usuario.email,
+        tipo: usuario.tipo
+      }
     });
   } catch (error) {
-    console.error('Erro no login:', error);
-    return res.status(500).json({ 
-      erro: 'Erro interno no servidor',
-      detalhes: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    next(error);
   }
 };
 
-export const register = async (req, res) => {
+export const registro = async (req, res, next) => {
   try {
-    const { nome, email, senha } = req.body;
+    const { email, senha, nome, telefone, tipo = 'cliente' } = req.body;
 
     // Validação básica
-    if (!nome || !email || !senha) {
+    if (!email || !senha || !nome || !telefone) {
       return res.status(400).json({ 
-        erro: 'Nome, email e senha são obrigatórios' 
+        erro: 'Dados incompletos',
+        camposNecessarios: ['email', 'senha', 'nome', 'telefone']
       });
     }
 
-    // Verificar se usuário já existe
+    // Verificar se email já existe
     const usuarioExistente = await Usuario.buscarPorEmail(email);
     if (usuarioExistente) {
-      return res.status(400).json({ 
-        erro: 'Email já cadastrado' 
-      });
+      return res.status(400).json({ erro: 'Email já cadastrado' });
     }
 
-    // Criptografar senha
-    const salt = await bcrypt.genSalt(10);
-    const senhaCriptografada = await bcrypt.hash(senha, salt);
-
     // Criar usuário
+    const hashSenha = await bcrypt.hash(senha, 10);
     const usuario = await Usuario.criar({
-      nome,
       email,
-      senha: senhaCriptografada
+      senha: hashSenha,
+      nome,
+      telefone,
+      tipo
     });
 
     // Gerar token
     const token = jwt.sign(
       { 
         id: usuario.id,
-        nome: usuario.nome,
-        email: usuario.email
+        tipo: usuario.tipo 
       },
       process.env.JWT_SECRET,
-      { expiresIn: '1d' }
+      { expiresIn: '24h' }
     );
 
-    // Retornar dados do usuário e token
-    const { senha: _, ...usuarioSemSenha } = usuario;
-    return res.status(201).json({
-      usuario: usuarioSemSenha,
-      token
+    // Retornar token e dados do usuário
+    res.status(201).json({
+      token,
+      usuario: {
+        id: usuario.id,
+        nome: usuario.nome,
+        email: usuario.email,
+        tipo: usuario.tipo
+      }
     });
   } catch (error) {
-    console.error('Erro no registro:', error);
-    return res.status(500).json({ 
-      erro: 'Erro interno no servidor',
-      detalhes: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    next(error);
   }
 }; 

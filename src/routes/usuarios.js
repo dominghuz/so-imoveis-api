@@ -10,13 +10,11 @@ import {
 
 const router = express.Router();
 
-// Rotas públicas
-router.post('/', criarUsuario); // Registro de cliente
-
-// Rotas protegidas
-router.get('/', authMiddleware, listarUsuarios);
-router.get('/:id', authMiddleware, buscarUsuario);
-router.put('/:id', authMiddleware, atualizarUsuario);
-router.delete('/:id', authMiddleware, deletarUsuario);
+// Rotas protegidas - apenas admin pode gerenciar usuários
+router.get('/', authMiddleware(['admin']), listarUsuarios);
+router.get('/:id', authMiddleware(['admin']), buscarUsuario);
+router.post('/', authMiddleware(['admin']), criarUsuario);
+router.put('/:id', authMiddleware(['admin']), atualizarUsuario);
+router.delete('/:id', authMiddleware(['admin']), deletarUsuario);
 
 export default router; 

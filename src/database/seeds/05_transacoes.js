@@ -1,62 +1,60 @@
-export const seed = async function(knex) {
+export async function seed(knex) {
   try {
-    // Limpa a tabela de transações
+    // Limpa a tabela antes de inserir
     await knex('transacoes').del();
 
-    // Busca IDs existentes
-    const imoveis = await knex('imoveis').select('id', 'finalidade', 'preco');
-    const clientes = await knex('usuarios').where('tipo', 'cliente').select('id');
-    const corretores = await knex('usuarios').where('tipo', 'corretor').select('id');
+    // Busca IDs existentes para referência
+    const imoveis = await knex('imoveis').select('id').limit(3);
+    const usuarios = await knex('usuarios').select('id', 'tipo');
+    
+    const clientes = usuarios.filter(u => u.tipo === 'cliente').map(u => u.id);
+    const corretores = usuarios.filter(u => u.tipo === 'corretor').map(u => u.id);
 
-    // Verifica se existem registros necessários
+    // Verifica se existem dados necessários
     if (!imoveis.length || !clientes.length || !corretores.length) {
-      console.log('Não há dados suficientes para criar transações. Execute primeiro os seeds de usuários e imóveis.');
+      console.log('Não há dados suficientes para criar transações');
       return;
     }
 
-    // Dados para seed
-    const transacoes = [
+    // Insere as transações
+    await knex('transacoes').insert([
       {
         imovel_id: imoveis[0].id,
-        cliente_id: clientes[0].id,
-        corretor_id: corretores[0].id,
-        tipo: imoveis[0].finalidade,
-        valor: imoveis[0].preco,
+        cliente_id: clientes[0],
+        corretor_id: corretores[0],
+        tipo: 'venda',
+        valor: 450000.00,
         status: 'concluido',
         data_inicio: '2024-01-15',
-        data_fim: '2024-02-15',
-        contrato_url: 'https://exemplo.com/contratos/1.pdf'
+        data_fim: '2024-01-20',
+        contrato_url: 'https://exemplo.com/contrato1.pdf'
       },
       {
-        imovel_id: imoveis[1] ? imoveis[1].id : imoveis[0].id,
-        cliente_id: clientes[0].id,
-        corretor_id: corretores[0].id,
-        tipo: imoveis[1] ? imoveis[1].finalidade : imoveis[0].finalidade,
-        valor: imoveis[1] ? imoveis[1].preco : 2000.00,
+        imovel_id: imoveis[1].id,
+        cliente_id: clientes[0],
+        corretor_id: corretores[0],
+        tipo: 'aluguel',
+        valor: 3500.00,
         status: 'pendente',
-        data_inicio: '2024-03-01',
-        data_fim: null,
-        contrato_url: null
+        data_inicio: '2024-02-01',
+        contrato_url: 'https://exemplo.com/contrato2.pdf'
+      },
+      {
+        imovel_id: imoveis[2].id,
+        cliente_id: clientes[0],
+        corretor_id: corretores[0],
+        tipo: 'venda',
+        valor: 850000.00,
+        status: 'cancelado',
+        data_inicio: '2024-02-15',
+        data_fim: '2024-02-20',
+        contrato_url: 'https://exemplo.com/contrato3.pdf'
       }
-    ];
+    ]);
 
-    // Insere as transações
-    await knex('transacoes').insert(transacoes);
-
-    // Atualiza status dos imóveis das transações concluídas
-    for (const transacao of transacoes) {
-      if (transacao.status === 'concluido') {
-        await knex('imoveis')
-          .where('id', transacao.imovel_id)
-          .update({
-            status: transacao.tipo === 'venda' ? 'vendido' : 'alugado'
-          });
-      }
-    }
-
-    console.log('Seed de transações executado com sucesso!');
+    console.log('Seeds de transações inseridos com sucesso!');
   } catch (error) {
-    console.error('Erro ao executar seed de transações:', error);
+    console.error('Erro ao inserir seeds de transações:', error);
     throw error;
   }
-}; 
+} 

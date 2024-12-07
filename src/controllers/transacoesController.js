@@ -1,162 +1,54 @@
 import knex from '../database/connection';
 
 export const transacoesController = {
-  // Listar todas as transações
   async listar(req, res) {
     try {
-      const transacoes = await knex('transacoes')
+      const { periodo, tipo, status } = req.query;
+      
+      let query = knex('transacoes')
         .select(
           'transacoes.*',
           'imoveis.tipo as imovel_tipo',
           'imoveis.finalidade',
-          'clientes.nome as cliente_nome',
-          'corretores.nome as corretor_nome'
+          'imoveis.cidade',
+          'imoveis.bairro',
+          'usuarios_cliente.nome as cliente_nome',
+          'usuarios_corretor.nome as corretor_nome'
         )
         .join('imoveis', 'transacoes.imovel_id', 'imoveis.id')
-        .join('usuarios as clientes', 'transacoes.cliente_id', 'clientes.id')
-        .join('usuarios as corretores', 'transacoes.corretor_id', 'corretores.id');
-      
-      return res.json(transacoes);
+        .join('usuarios as usuarios_cliente', 'transacoes.cliente_id', 'usuarios_cliente.id')
+        .join('usuarios as usuarios_corretor', 'transacoes.corretor_id', 'usuarios_corretor.id');
+
+      // Filtro por período
+      if (periodo === 'mes') {
+        const inicioMes = new Date();
+        inicioMes.setDate(1);
+        query = query.where('transacoes.data_inicio', '>=', inicioMes.toISOString().split('T')[0]);
+      }
+
+      // Filtro por tipo
+      if (tipo && tipo !== 'todos') {
+        query = query.where('transacoes.tipo', tipo);
+      }
+
+      // Filtro por status
+      if (status && status !== 'todos') {
+        query = query.where('transacoes.status', status);
+      }
+
+      const transacoes = await query;
+
+      return res.json({
+        success: true,
+        data: transacoes
+      });
+
     } catch (error) {
-      return res.status(500).json({ error: error.message });
-    }
-  },
-
-  // Buscar uma transação específica
-  async buscarPorId(req, res) {
-    try {
-      const { id } = req.params;
-      const transacao = await knex('transacoes')
-        .select(
-          'transacoes.*',
-          'imoveis.tipo as imovel_tipo',
-          'imoveis.finalidade',
-          'clientes.nome as cliente_nome',
-          'corretores.nome as corretor_nome'
-        )
-        .join('imoveis', 'transacoes.imovel_id', 'imoveis.id')
-        .join('usuarios as clientes', 'transacoes.cliente_id', 'clientes.id')
-        .join('usuarios as corretores', 'transacoes.corretor_id', 'corretores.id')
-        .where('transacoes.id', id)
-        .first();
-
-      if (!transacao) {
-        return res.status(404).json({ error: 'Transação não encontrada' });
-      }
-
-      return res.json(transacao);
-    } catch (error) {
-      return res.status(500).json({ error: error.message });
-    }
-  },
-
-  // Criar nova transação
-  async criar(req, res) {
-    try {
-      const {
-        imovel_id,
-        cliente_id,
-        corretor_id,
-        tipo,
-        valor,
-        data_inicio,
-        data_fim,
-        contrato_url
-      } = req.body;
-
-      // Validações básicas
-      if (!imovel_id || !cliente_id || !corretor_id || !tipo || !valor || !data_inicio) {
-        return res.status(400).json({ error: 'Dados obrigatórios não fornecidos' });
-      }
-
-      // Verifica se o imóvel está disponível
-      const imovel = await knex('imoveis')
-        .where('id', imovel_id)
-        .where('status', 'disponivel')
-        .first();
-
-      if (!imovel) {
-        return res.status(400).json({ error: 'Imóvel não disponível para transação' });
-      }
-
-      const [transacao] = await knex('transacoes').insert({
-        imovel_id,
-        cliente_id,
-        corretor_id,
-        tipo,
-        valor,
-        data_inicio,
-        data_fim,
-        contrato_url,
-        status: 'pendente'
-      }).returning('*');
-
-      // Atualiza o status do imóvel
-      await knex('imoveis')
-        .where('id', imovel_id)
-        .update({
-          status: tipo === 'venda' ? 'vendido' : 'alugado'
-        });
-
-      return res.status(201).json(transacao);
-    } catch (error) {
-      return res.status(500).json({ error: error.message });
-    }
-  },
-
-  // Atualizar status da transação
-  async atualizarStatus(req, res) {
-    try {
-      const { id } = req.params;
-      const { status } = req.body;
-
-      if (!['pendente', 'concluido', 'cancelado'].includes(status)) {
-        return res.status(400).json({ error: 'Status inválido' });
-      }
-
-      const transacao = await knex('transacoes')
-        .where('id', id)
-        .update({ status })
-        .returning('*');
-
-      if (status === 'cancelado') {
-        // Se cancelado, volta o imóvel para disponível
-        await knex('imoveis')
-          .where('id', transacao.imovel_id)
-          .update({ status: 'disponivel' });
-      }
-
-      return res.json(transacao);
-    } catch (error) {
-      return res.status(500).json({ error: error.message });
-    }
-  },
-
-  // Excluir transação
-  async excluir(req, res) {
-    try {
-      const { id } = req.params;
-      
-      const transacao = await knex('transacoes')
-        .where('id', id)
-        .first();
-
-      if (!transacao) {
-        return res.status(404).json({ error: 'Transação não encontrada' });
-      }
-
-      await knex('transacoes')
-        .where('id', id)
-        .del();
-
-      // Volta o imóvel para disponível
-      await knex('imoveis')
-        .where('id', transacao.imovel_id)
-        .update({ status: 'disponivel' });
-
-      return res.status(204).send();
-    } catch (error) {
-      return res.status(500).json({ error: error.message });
+      console.error('Erro ao listar transações:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Erro ao buscar transações'
+      });
     }
   }
 }; 

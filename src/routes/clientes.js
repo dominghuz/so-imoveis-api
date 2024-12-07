@@ -6,17 +6,25 @@ import {
   criarCliente,
   atualizarCliente,
   deletarCliente,
-  estatisticasClientes
+  estatisticasClientes,
+  meuPerfil,
+  atualizarMeuPerfil
 } from '../controllers/clienteController.js';
 
 const router = express.Router();
 
-// Rotas protegidas (apenas para corretores e admin)
-router.get('/', authMiddleware, listarClientes);
-router.get('/estatisticas', authMiddleware, estatisticasClientes);
-router.get('/:id', authMiddleware, buscarCliente);
-router.post('/', authMiddleware, criarCliente);
-router.put('/:id', authMiddleware, atualizarCliente);
-router.delete('/:id', authMiddleware, deletarCliente);
+// Rota pública para registro de novos clientes
+router.post('/', criarCliente);
+
+// Rotas para clientes gerenciarem seu próprio perfil
+router.get('/meu-perfil', authMiddleware(['cliente']), meuPerfil);
+router.put('/meu-perfil', authMiddleware(['cliente']), atualizarMeuPerfil);
+
+// Rotas protegidas - apenas corretores e admin podem acessar
+router.get('/', authMiddleware(['admin', 'corretor']), listarClientes);
+router.get('/estatisticas', authMiddleware(['admin', 'corretor']), estatisticasClientes);
+router.get('/:id', authMiddleware(['admin', 'corretor']), buscarCliente);
+router.put('/:id', authMiddleware(['admin', 'corretor']), atualizarCliente);
+router.delete('/:id', authMiddleware(['admin']), deletarCliente);
 
 export default router; 

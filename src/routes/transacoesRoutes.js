@@ -8,18 +8,18 @@ const router = express.Router();
 router.use(authMiddleware);
 
 // GET /api/transacoes - Lista todas as transações
-router.get('/', transacoesController.listar);
+router.get('/transacoes', transacoesController.listar);
 
-// GET /api/transacoes/:id - Busca uma transação específica
-router.get('/:id', transacoesController.buscarPorId);
+// GET /api/transacoes/balanco - Calcula o balanço das transações
+router.get('/transacoes/balanco', transacoesController.balanco);
 
 // POST /api/transacoes - Cria uma nova transação
-router.post('/', transacoesController.criar);
+router.post('/transacoes', transacoesController.criar);
 
-// PATCH /api/transacoes/:id/status - Atualiza o status de uma transação
-router.patch('/:id/status', transacoesController.atualizarStatus);
+// PUT /api/transacoes/:id - Atualiza uma transação existente
+router.put('/transacoes/:id', transacoesController.atualizar);
 
 // DELETE /api/transacoes/:id - Exclui uma transação
-router.delete('/:id', transacoesController.excluir);
+router.delete('/transacoes/:id', transacoesController.excluir);
 
 export default router; 

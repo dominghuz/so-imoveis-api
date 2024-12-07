@@ -83,16 +83,7 @@ export const atualizarUsuario = async (req, res, next) => {
       return res.status(404).json({ erro: 'Usuário não encontrado' });
     }
 
-    // Verifica permissões
-    if (req.userId !== parseInt(id) && req.userTipo !== 'admin') {
-      return res.status(403).json({ erro: 'Sem permissão para atualizar este usuário' });
-    }
-
-    // Se não for admin, não pode mudar o tipo
-    if (tipo && tipo !== usuario.tipo && req.userTipo !== 'admin') {
-      return res.status(403).json({ erro: 'Sem permissão para alterar o tipo de usuário' });
-    }
-
+    // Prepara os dados para atualização
     const dados = { nome, email, telefone, tipo };
 
     // Se foi enviada uma nova senha, criptografa
@@ -102,11 +93,8 @@ export const atualizarUsuario = async (req, res, next) => {
     }
 
     const usuarioAtualizado = await Usuario.atualizar(id, dados);
-    
-    // Remove o campo senha do retorno
     const { senha: _, ...usuarioSemSenha } = usuarioAtualizado;
-
-    res.json(usuarioSemSenha);
+    return res.json(usuarioSemSenha);
   } catch (error) {
     next(error);
   }
@@ -116,11 +104,7 @@ export const deletarUsuario = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    // Apenas admin pode deletar usuários
-    if (req.userTipo !== 'admin') {
-      return res.status(403).json({ erro: 'Sem permissão para deletar usuários' });
-    }
-
+    // Verifica se o usuário existe
     const usuario = await Usuario.buscarPorId(id);
     if (!usuario) {
       return res.status(404).json({ erro: 'Usuário não encontrado' });

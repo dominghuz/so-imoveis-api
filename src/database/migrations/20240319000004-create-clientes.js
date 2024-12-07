@@ -3,12 +3,15 @@ export const up = function(knex) {
   return knex.schema.createTable('clientes', table => {
     console.log('Definindo colunas...');
     
-    // Identificação
-    table.increments('id').primary(); // SQLite não suporta UUID nativamente
-    table.string('nome', 100).notNullable();
+    // Chave primária e relacionamento com usuário
+    table.increments('id').primary();
+    table.integer('usuario_id').unsigned().notNullable().unique();
+    table.foreign('usuario_id').references('usuarios.id')
+      .onDelete('CASCADE')
+      .onUpdate('CASCADE');
+    
+    // Documentação
     table.string('bi', 14).notNullable().unique();
-    table.string('email', 100).notNullable().unique();
-    table.string('telefone', 15).notNullable();
     
     // Dados pessoais
     table.date('data_nascimento');
@@ -23,8 +26,8 @@ export const up = function(knex) {
     table.decimal('renda_mensal', 10, 2);
     
     // Interesses
-    table.string('interesse').checkIn(['Compra', 'Aluguel', 'Ambos']); // Enum simulado
-    table.text('tipo_imovel_interesse'); // Vamos armazenar como JSON string
+    table.string('interesse').checkIn(['Compra', 'Aluguel', 'Ambos']);
+    table.text('tipo_imovel_interesse');
     table.text('observacoes');
     
     // Timestamps

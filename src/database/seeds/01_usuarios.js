@@ -1,37 +1,27 @@
+import bcrypt from 'bcrypt';
+
 export const seed = async function(knex) {
-  // Limpa a tabela antes de inserir
+  // Limpa as tabelas
+  await knex('clientes').del();
   await knex('usuarios').del();
   
-  // Insere os usuários
+  const senha = await bcrypt.hash('senha123', 10);
+  
+  // Insere usuários
   await knex('usuarios').insert([
     {
-      nome: 'Admin',
-      email: 'admin@imobiliaria.com',
-      telefone: '(11) 99999-9999',
-      // senha: 123456 (já hasheada com bcrypt)
-      senha: '$2b$10$5YZ9jWX6iRiQvV9V9vV9v.5YZ9jWX6iRiQvV9V9vV9v',
+      email: 'admin@teste.com',
+      nome: 'Administrador',
+      telefone: '999999999',
+      senha: senha,
       tipo: 'admin'
     },
     {
-      nome: 'João Corretor',
-      email: 'joao@imobiliaria.com',
-      telefone: '(11) 98888-8888',
-      senha: '$2b$10$5YZ9jWX6iRiQvV9V9vV9v.5YZ9jWX6iRiQvV9V9vV9v',
+      email: 'corretor@teste.com',
+      nome: 'Corretor Teste',
+      telefone: '888888888',
+      senha: senha,
       tipo: 'corretor'
-    },
-    {
-      nome: 'Maria Corretora',
-      email: 'maria@imobiliaria.com',
-      telefone: '(11) 97777-7777',
-      senha: '$2b$10$5YZ9jWX6iRiQvV9V9vV9v.5YZ9jWX6iRiQvV9V9vV9v',
-      tipo: 'corretor'
-    },
-    {
-      nome: 'Cliente Teste',
-      email: 'cliente@teste.com',
-      telefone: '(11) 96666-6666',
-      senha: '$2b$10$5YZ9jWX6iRiQvV9V9vV9v.5YZ9jWX6iRiQvV9V9vV9v',
-      tipo: 'cliente'
     }
   ]);
 }; 
