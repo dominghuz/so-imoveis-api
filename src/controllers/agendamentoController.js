@@ -14,7 +14,8 @@ export const listarAgendamentos = async (req, res, next) => {
       limit = 10
     } = req.query;
 
-    // Se não for admin, limita a visualização
+    console.log('Filtros recebidos:', { data, status, corretor_id, cliente_id, imovel_id });
+
     const filtros = {
       data,
       status,
@@ -30,18 +31,26 @@ export const listarAgendamentos = async (req, res, next) => {
       filtros.cliente_id = req.userId;
     }
 
+    console.log('Filtros aplicados:', filtros);
+
     const agendamentos = await Agendamento.listar(filtros);
     const total = await Agendamento.contar(filtros);
 
+    // Log para debug
+    console.log('Total de agendamentos:', total);
+    console.log('Primeiro agendamento:', agendamentos[0]);
+
     res.json({
-      agendamentos,
-      pagination: {
+      dados: agendamentos,
+      paginacao: {
         total,
-        page: parseInt(page),
-        totalPages: Math.ceil(total / limit)
+        pagina_atual: parseInt(page),
+        total_paginas: Math.ceil(total / limit),
+        itens_por_pagina: parseInt(limit)
       }
     });
   } catch (error) {
+    console.error('Erro ao listar agendamentos:', error);
     next(error);
   }
 };

@@ -11,14 +11,18 @@ import {
 
 const router = express.Router();
 
-// Todas as rotas requerem autenticação
-router.use(authMiddleware);
+// Rotas com permissões específicas
+router.get('/', authMiddleware(['admin', 'corretor', 'cliente']), listarTransacoes);
+router.get('/estatisticas', authMiddleware(['admin', 'corretor']), estatisticasTransacoes);
+router.get('/:id', authMiddleware(['admin', 'corretor', 'cliente']), buscarTransacao);
 
-router.get('/', listarTransacoes);
-router.get('/estatisticas', estatisticasTransacoes);
-router.get('/:id', buscarTransacao);
-router.post('/', criarTransacao);
-router.put('/:id', atualizarTransacao);
-router.delete('/:id', deletarTransacao);
+// Apenas corretores podem criar transações
+router.post('/', authMiddleware(['corretor']), criarTransacao);
+
+// Corretores podem atualizar suas próprias transações
+router.put('/:id', authMiddleware(['admin', 'corretor']), atualizarTransacao);
+
+// Apenas admin pode deletar
+router.delete('/:id', authMiddleware(['admin']), deletarTransacao);
 
 export default router; 

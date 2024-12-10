@@ -3,22 +3,10 @@ export const up = function(knex) {
   return knex.schema.createTable('agendamentos', table => {
     console.log('Definindo colunas...');
     
-    table.increments('id').primary(); // SQLite não suporta UUID nativamente
-    table.integer('imovel_id').unsigned()
-      .references('id')
-      .inTable('imoveis')
-      .onDelete('CASCADE')
-      .notNullable();
-    table.integer('cliente_id').unsigned()
-      .references('id')
-      .inTable('usuarios')
-      .onDelete('CASCADE')
-      .notNullable();
-    table.integer('corretor_id').unsigned()
-      .references('id')
-      .inTable('usuarios')
-      .onDelete('CASCADE')
-      .notNullable();
+    table.increments('id').primary();
+    table.integer('imovel_id').unsigned().notNullable();
+    table.integer('cliente_id').unsigned().notNullable();
+    table.integer('corretor_id').unsigned().notNullable();
     table.date('data').notNullable();
     table.time('hora').notNullable();
     table.enu('status', ['pendente', 'confirmado', 'cancelado', 'realizado'])
@@ -26,6 +14,11 @@ export const up = function(knex) {
       .defaultTo('pendente');
     table.text('observacoes');
     table.timestamps(true, true);
+
+    table.foreign('imovel_id').references('imoveis.id');
+    table.foreign('cliente_id').references('usuarios.id');
+    table.foreign('corretor_id').references('usuarios.id');
+  
     
     console.log('Colunas definidas com sucesso!');
   }).then(() => {

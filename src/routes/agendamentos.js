@@ -11,14 +11,18 @@ import {
 
 const router = express.Router();
 
-// Todas as rotas requerem autenticação
-router.use(authMiddleware);
+// Rotas com permissões específicas
+router.get('/', authMiddleware(['admin', 'corretor', 'cliente']), listarAgendamentos);
+router.get('/periodo', authMiddleware(['admin', 'corretor', 'cliente']), listarAgendamentosPorPeriodo);
+router.get('/:id', authMiddleware(['admin', 'corretor', 'cliente']), buscarAgendamento);
 
-router.get('/', listarAgendamentos);
-router.get('/periodo', listarAgendamentosPorPeriodo);
-router.get('/:id', buscarAgendamento);
-router.post('/', criarAgendamento);
-router.put('/:id', atualizarAgendamento);
-router.delete('/:id', deletarAgendamento);
+// Clientes podem criar agendamentos
+router.post('/', authMiddleware(['cliente']), criarAgendamento);
+
+// Corretores podem atualizar status
+router.put('/:id', authMiddleware(['admin', 'corretor']), atualizarAgendamento);
+
+// Apenas admin pode deletar
+router.delete('/:id', authMiddleware(['admin']), deletarAgendamento);
 
 export default router; 

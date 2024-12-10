@@ -1,61 +1,38 @@
-import supabase from '../config/supabase.js';
-import { ContratoSchema } from '../models/Contrato.js';
+import Contrato from '../models/Contrato.js';
+import Imovel from '../models/Imovel.js';
 
 export const getContratos = async (req, res, next) => {
   try {
     const { 
-      page = 1, 
-      limit = 10, 
       tipo,
       status,
-      data_inicio,
-      data_fim,
-      corretor_id 
+      corretor_id,
+      cliente_id,
+      page = 1,
+      limit = 10
     } = req.query;
-    
-    const offset = (page - 1) * limit;
 
-    let query = supabase
-      .from('contratos')
-      .select(`
-        *,
-        imovel:imovel_id(*),
-        cliente:cliente_id(*),
-        corretor:corretor_id(*)
-      `, { count: 'exact' })
-      .range(offset, offset + limit - 1)
-      .order('created_at', { ascending: false });
+    const filtros = {
+      tipo,
+      status,
+      limit: parseInt(limit),
+      offset: (page - 1) * limit
+    };
 
-    if (tipo) {
-      query = query.eq('tipo', tipo);
+    // Restringe visualização baseado no tipo de usuário
+    if (req.userTipo === 'corretor') {
+      filtros.corretor_id = req.userId;
     }
 
-    if (status) {
-      query = query.eq('status', status);
-    }
-
-    if (data_inicio) {
-      query = query.gte('data_inicio', data_inicio);
-    }
-
-    if (data_fim) {
-      query = query.lte('data_fim', data_fim);
-    }
-
-    if (corretor_id) {
-      query = query.eq('corretor_id', corretor_id);
-    }
-
-    const { data, error, count } = await query;
-
-    if (error) throw error;
+    const contratos = await Contrato.listar(filtros);
+    const total = await Contrato.contar(filtros);
 
     res.json({
-      contratos: data,
-      pagination: {
-        total: count,
-        page: parseInt(page),
-        totalPages: Math.ceil(count / limit)
+      dados: contratos,
+      paginacao: {
+        total,
+        pagina_atual: parseInt(page),
+        total_paginas: Math.ceil(total / limit)
       }
     });
   } catch (error) {
@@ -65,25 +42,13 @@ export const getContratos = async (req, res, next) => {
 
 export const getContrato = async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from('contratos')
-      .select(`
-        *,
-        imovel:imovel_id(*),
-        cliente:cliente_id(*),
-        corretor:corretor_id(*)
-      `)
-      .eq('id', req.params.id)
-      .single();
-
-    if (error) throw error;
-    if (!data) {
-      const error = new Error('Contrato não encontrado');
-      error.status = 404;
-      throw error;
+    const contrato = await Contrato.buscarPorId(req.params.id);
+    
+    if (!contrato) {
+      return res.status(404).json({ erro: 'Contrato não encontrado' });
     }
     
-    res.json(data);
+    res.json(contrato);
   } catch (error) {
     next(error);
   }
@@ -91,50 +56,53 @@ export const getContrato = async (req, res, next) => {
 
 export const createContrato = async (req, res, next) => {
   try {
-    const validatedData = await ContratoSchema.parseAsync(req.body);
+    const {
+      imovel_id,
+      cliente_id,
+      tipo,
+      valor,
+      data_inicio,
+      data_fim,
+      observacoes
+    } = req.body;
 
-    // Verificar se o imóvel está disponível
-    const { data: imovel, error: imovelError } = await supabase
-      .from('imoveis')
-      .select('status')
-      .eq('id', validatedData.imovel_id)
-      .single();
+    // Validações básicas
+    if (!imovel_id || !cliente_id || !tipo || !valor || !data_inicio) {
+      return res.status(400).json({ 
+        erro: 'Dados incompletos',
+        camposNecessarios: ['imovel_id', 'cliente_id', 'tipo', 'valor', 'data_inicio']
+      });
+    }
 
-    if (imovelError || !imovel) {
-      const error = new Error('Imóvel não encontrado');
-      error.status = 404;
-      throw error;
+    // Verificar se o imóvel existe e está disponível
+    const imovel = await Imovel.buscarPorId(imovel_id);
+    if (!imovel) {
+      return res.status(404).json({ erro: 'Imóvel não encontrado' });
     }
 
     if (imovel.status !== 'disponivel') {
-      const error = new Error('Imóvel não está disponível');
-      error.status = 400;
-      throw error;
+      return res.status(400).json({ erro: 'Imóvel não está disponível' });
     }
 
-    const { data, error } = await supabase
-      .from('contratos')
-      .insert([{
-        ...validatedData,
-        corretor_id: req.user?.id,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }])
-      .select()
-      .single();
-
-    if (error) throw error;
+    // Criar contrato
+    const contrato = await Contrato.criar({
+      imovel_id,
+      cliente_id,
+      corretor_id: req.userId, // ID do corretor logado
+      tipo,
+      valor,
+      data_inicio,
+      data_fim,
+      observacoes,
+      status: 'pendente'
+    });
 
     // Atualizar status do imóvel
-    await supabase
-      .from('imoveis')
-      .update({ 
-        status: validatedData.tipo === 'venda' ? 'vendido' : 'alugado',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', validatedData.imovel_id);
+    await Imovel.atualizar(imovel_id, {
+      status: tipo === 'venda' ? 'vendido' : 'alugado'
+    });
 
-    res.status(201).json(data);
+    res.status(201).json(contrato);
   } catch (error) {
     next(error);
   }
@@ -142,26 +110,30 @@ export const createContrato = async (req, res, next) => {
 
 export const updateContrato = async (req, res, next) => {
   try {
-    const validatedData = await ContratoSchema.partial().parseAsync(req.body);
+    const { id } = req.params;
+    const { status, observacoes } = req.body;
 
-    const { data, error } = await supabase
-      .from('contratos')
-      .update({
-        ...validatedData,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', req.params.id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    if (!data) {
-      const error = new Error('Contrato não encontrado');
-      error.status = 404;
-      throw error;
+    const contrato = await Contrato.buscarPorId(id);
+    if (!contrato) {
+      return res.status(404).json({ erro: 'Contrato não encontrado' });
     }
-    
-    res.json(data);
+
+    // Validar status
+    const statusValidos = ['pendente', 'assinado', 'cancelado', 'finalizado'];
+    if (status && !statusValidos.includes(status)) {
+      return res.status(400).json({ 
+        erro: 'Status inválido',
+        statusValidos
+      });
+    }
+
+    const contratoAtualizado = await Contrato.atualizar(id, {
+      status,
+      observacoes,
+      updated_at: new Date()
+    });
+
+    res.json(contratoAtualizado);
   } catch (error) {
     next(error);
   }
@@ -169,37 +141,18 @@ export const updateContrato = async (req, res, next) => {
 
 export const deleteContrato = async (req, res, next) => {
   try {
-    // Primeiro obter o contrato para saber o imóvel
-    const { data: contrato, error: contratoError } = await supabase
-      .from('contratos')
-      .select('imovel_id')
-      .eq('id', req.params.id)
-      .single();
-
-    if (contratoError || !contrato) {
-      const error = new Error('Contrato não encontrado');
-      error.status = 404;
-      throw error;
+    const { id } = req.params;
+    
+    const contrato = await Contrato.buscarPorId(id);
+    if (!contrato) {
+      return res.status(404).json({ erro: 'Contrato não encontrado' });
     }
 
-    // Deletar o contrato
-    const { error } = await supabase
-      .from('contratos')
-      .delete()
-      .eq('id', req.params.id);
-
-    if (error) throw error;
-
     // Restaurar status do imóvel para disponível
-    await supabase
-      .from('imoveis')
-      .update({ 
-        status: 'disponivel',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', contrato.imovel_id);
+    await Imovel.atualizar(contrato.imovel_id, { status: 'disponivel' });
 
-    res.json({ message: 'Contrato removido com sucesso' });
+    await Contrato.deletar(id);
+    res.status(204).send();
   } catch (error) {
     next(error);
   }
@@ -207,26 +160,13 @@ export const deleteContrato = async (req, res, next) => {
 
 export const gerarPDF = async (req, res, next) => {
   try {
-    const { data: contrato, error } = await supabase
-      .from('contratos')
-      .select(`
-        *,
-        imovel:imovel_id(*),
-        cliente:cliente_id(*),
-        corretor:corretor_id(*)
-      `)
-      .eq('id', req.params.id)
-      .single();
-
-    if (error || !contrato) {
-      const error = new Error('Contrato não encontrado');
-      error.status = 404;
-      throw error;
+    const contrato = await Contrato.buscarPorId(req.params.id);
+    
+    if (!contrato) {
+      return res.status(404).json({ erro: 'Contrato não encontrado' });
     }
 
-    // Aqui você implementaria a lógica de geração do PDF
-    // Por exemplo, usando uma biblioteca como PDFKit ou html-pdf
-    
+    // TODO: Implementar geração de PDF
     res.json({
       message: 'Função de geração de PDF será implementada',
       contrato
